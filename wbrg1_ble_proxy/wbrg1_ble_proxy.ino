@@ -189,6 +189,11 @@ void loop() {
         Serial.print(sink.reconnects());
         Serial.print("  link: ");
         Serial.println(sink.ready() ? "up" : "down");
+
+        // Diagnostics to HA (auto-discovered sensors).
+        sink.publishTelemetry(WiFi.RSSI(), (uint32_t)xPortGetFreeHeapSize(),
+                              (uint32_t)(now / 1000), seenTotal,
+                              sink.reconnects(), queue.dropped());
     }
 
     delay(5);

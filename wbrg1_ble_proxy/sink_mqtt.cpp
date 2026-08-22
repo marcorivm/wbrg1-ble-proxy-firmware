@@ -85,6 +85,7 @@ bool MqttSink::ensureBroker() {
         if (_cmdTopic) {
             _mqtt.subscribe(_cmdTopic);
         }
+        publishDiscovery();
     } else {
         Serial.print("[mqtt] connect failed, rc=");
         Serial.println(_mqtt.state());
@@ -156,4 +157,55 @@ void MqttSink::publish(const Advert *adverts, size_t count) {
         }
     }
     flushBuffer();
+}
+
+
+// ---- Diagnostics: Home Assistant MQTT discovery -------------------------
+
+// One JSON telemetry line feeds all sensors; each discovery config pulls its
+// field with a value_template. Availability follows the retained status LWT.
+static void discSensor(PubSubClient &mqtt, const char *id, const char *name,
+                       const char *field, const char *unit, const char *devcla,
+                       const char *statecla) {
+    char topic[96];
+    snprintf(topic, sizeof(topic),
+             "homeassistant/sensor/wbrg1_%s_%s/config", SCANNER_ID, id);
+    char payload[512];
+    int n = snprintf(payload, sizeof(payload),
+        "{\"name\":\"%s\",\"uniq_id\":\"wbrg1_%s_%s\","
+        "\"stat_t\":\"" MQTT_TELEM "\",\"val_tpl\":\"{{ value_json.%s }}\","
+        "\"avty_t\":\"" MQTT_STATUS "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\","
+        "\"ent_cat\":\"diagnostic\"%s%s%s%s%s%s"
+        ",\"dev\":{\"identifiers\":[\"wbrg1_%s\"],\"name\":\"WBRG1 %s\","
+        "\"mf\":\"Tuya/Realtek\",\"mdl\":\"WBRG1 (RTL8721CSM)\"}}",
+        name, SCANNER_ID, id, field,
+        unit[0] ? ",\"unit_of_meas\":\"" : "", unit, unit[0] ? "\"" : "",
+        devcla[0] ? ",\"dev_cla\":\"" : "", devcla,
+        devcla[0] ? "\"" : "",
+        SCANNER_ID, SCANNER_ID);
+    (void)statecla;
+    (void)n;
+    mqtt.publish(topic, payload, true);   // retained
+}
+
+void MqttSink::publishDiscovery() {
+    discSensor(_mqtt, "rssi",   "WBRG1 " SCANNER_ID " WiFi RSSI",  "rssi",   "dBm",   "signal_strength", "measurement");
+    discSensor(_mqtt, "heap",   "WBRG1 " SCANNER_ID " Free heap",  "heap",   "B",     "data_size",       "measurement");
+    discSensor(_mqtt, "uptime", "WBRG1 " SCANNER_ID " Uptime",     "uptime", "s",     "duration",        "total_increasing");
+    discSensor(_mqtt, "adv",    "WBRG1 " SCANNER_ID " Adverts",    "adverts","",      "",                "total_increasing");
+    discSensor(_mqtt, "recon",  "WBRG1 " SCANNER_ID " Reconnects", "recon",  "",      "",                "total_increasing");
+    discSensor(_mqtt, "drops",  "WBRG1 " SCANNER_ID " Queue drops","drops",  "",      "",                "total_increasing");
+}
+
+void MqttSink::publishTelemetry(int rssi, uint32_t heap, uint32_t uptime_s,
+                                uint32_t adverts, uint32_t reconnects, uint32_t drops) {
+    if (!ready()) {
+        return;
+    }
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+        "{\"rssi\":%d,\"heap\":%u,\"uptime\":%u,\"adverts\":%u,\"recon\":%u,\"drops\":%u}",
+        rssi, (unsigned)heap, (unsigned)uptime_s, (unsigned)adverts,
+        (unsigned)reconnects, (unsigned)drops);
+    _mqtt.publish(MQTT_TELEM, buf);
 }

@@ -216,6 +216,32 @@ and the module appears under *Settings → Devices & services → Bluetooth* and
 Bermuda's scanner list. It's advertisement-only (`connectable=False`), which is all
 Bermuda needs.
 
+## Diagnostics
+
+The firmware publishes a telemetry line on `wbrg1/<id>/telemetry` every 30 s and
+auto-creates Home Assistant sensors via MQTT discovery (entity category
+*diagnostic*, availability tied to the `online`/`offline` LWT):
+
+- **WiFi RSSI**, **Free heap**, **Uptime**, **Adverts** (total seen),
+  **Reconnects** (broker (re)connections after the first — a steady climb means
+  the link is flapping), **Queue drops** (BLE ring overflow — a small one-time
+  count at boot is normal).
+
+```json
+wbrg1/<id>/telemetry  {"rssi":-67,"heap":105952,"uptime":31,"adverts":597,"recon":0,"drops":78}
+```
+
+## Passive vs active scanning
+
+`SCAN_ACTIVE` in `config.h` (default `0` = passive). Passive never transmits —
+the safe default next to a co-located Zigbee radio. Active additionally sends
+scan requests, which pulls **scan responses** (so more devices report a **name**)
+and yields more RSSI samples per second (smoother presence). In testing on a
+combined ZS3L+WBRG1 gateway, active roughly doubled the sample rate and surfaced
+device names, and the co-located Zigbee router stayed online — but that was a short
+test. If you enable active, watch the router's link quality (visible in HA) and the
+WBRG1's reconnect counter, and revert with one OTA if either degrades.
+
 ---
 
 ## Hard-won lessons

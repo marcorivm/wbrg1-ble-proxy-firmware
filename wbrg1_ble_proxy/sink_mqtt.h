@@ -23,9 +23,15 @@ public:
     // Register a command topic + handler; (re)subscribed on every connect.
     void onCommand(const char *topic, void (*cb)(char *, uint8_t *, unsigned int));
 
+    // Publish a JSON telemetry line for the diagnostic sensors (HA discovery
+    // config is auto-published on connect).
+    void publishTelemetry(int rssi, uint32_t heap, uint32_t uptime_s,
+                          uint32_t adverts, uint32_t reconnects, uint32_t drops);
+
 private:
     bool ensureWifi();
     bool ensureBroker();
+    void publishDiscovery();   // HA MQTT-discovery configs for the diag sensors
     // Appends one advert as a JSON object. Returns false if it would not fit,
     // leaving the buffer untouched so the caller can flush and retry.
     bool appendAdvert(const Advert &a);

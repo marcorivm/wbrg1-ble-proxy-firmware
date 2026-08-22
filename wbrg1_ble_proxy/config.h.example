@@ -16,6 +16,7 @@
 #define MQTT_TOPIC      "wbrg1/" SCANNER_ID "/adv"
 #define MQTT_STATUS     "wbrg1/" SCANNER_ID "/status"
 #define MQTT_CMD        "wbrg1/" SCANNER_ID "/cmd"
+#define MQTT_TELEM      "wbrg1/" SCANNER_ID "/telemetry"
 // -------------------------------------------------------------------------
 
 // Passive scanning by default: it never transmits. Active scanning would
