@@ -67,10 +67,37 @@ char call `client_all_char_descriptor_discovery`; when all done → discovery re
   `BluetoothGATTNotifyDataResponse(79)` (same pattern as advert streaming). For
   indications, call `client_attr_ind_confirm`.
 
-## Concurrency
-- Discovery/read/write run in the API task, blocking on FreeRTOS semaphores that
-  the (BLE-stack-context) callbacks give. Notifications marshal via a queue to the
-  API task, which owns the socket — never send on the socket from the BLE callback.
+## Concurrency — the context-safety rule (learned the hard way)
+**BLE *control* calls hard-fault the chip when made from the API socket task.**
+Repeatably: `BLE.configScan()->stopScan()` + `connect()` called from the API task
+crashed the device (took the scanner down with it). A 32 KB API-task stack alone
+let `connect()` *return* (false) without crashing, but the link never reached
+CONNECTED because the scanner was still running — and stopping the scanner from the
+API task is exactly what crashes. Catch-22 → the fix below.
+
+**Rule: all BLE control (scan start/stop, connect, disconnect, and — by extension —
+the GATT discovery/read/write kickoff calls) must run in the `loop()` task context,
+where `BLE.begin*` was initialised (matching the Arduino examples). The API socket
+task may only (a) touch the socket and (b) marshal BLE work to `loop()`.**
+
+Marshalling pattern now implemented for connect/disconnect (see
+`esphome_api.cpp: serviceBleOp / execConnectLoop / execDisconnectLoop`):
+- API task fills `_pendAddr/_pendType`, sets `_pendOp` (1=connect, 2=disconnect),
+  then `xSemaphoreTake(_opSem, timeout)` — blocks.
+- `loop()` calls `espApi.serviceBleOp()` every pass; when `_pendOp!=0` it runs the
+  op **in the loop task**, writes `_pendOk/_pendConnId`, clears `_pendOp`, gives
+  `_opSem`. API task wakes, builds the response, sends on the socket (its own ctx).
+- Callbacks (discovery/read/write/notify results) still fire in the BLE-stack ctx
+  and only give semaphores / push to queues — never send on the socket, never call
+  BLE control from there either (e.g. scan-resume-on-disconnect must be deferred to
+  `loop()`, not done inside `disconnect_cb`).
+
+**3b/3c must extend the SAME marshalling:** discovery, read, write and notify-enable
+each need a `_pendOp` code so their SDK kickoff (`client_all_primary_srv_discovery`,
+`client_attr_read/write`) runs in `loop()`, not the API task. The result callbacks
+can stay as-is (they already just signal). Notifications marshal inbound via the
+existing advert-style SPSC queue → API task drains → sends msg 79.
+
 - MTU: report the negotiated MTU in `BluetoothDeviceConnectionResponse` (exchange
   MTU on connect; `client_attr_read` returns up to MTU-1). 3a currently reports 247
   as a placeholder — refine to the real value.
