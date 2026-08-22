@@ -1,5 +1,37 @@
 # Handoff — connectable BLE proxy (Phase 3), 2026-08-22
 
+## UPDATE 2026-08-22 afternoon — task-context was NOT the root cause
+Validated on hardware with the marshalled build (connect runs in `loop()`):
+- From `loop()`: `stopScan()` OK, `connect()` to a non-existent address OK
+  (times out cleanly). Both driven by new MQTT diag commands (see below).
+- Connect to the real ESP32 via the ESPHome API path → **still hard-faults**.
+  So the crash happens when a link actually *establishes*, not because of the
+  calling task. Root cause still unknown; needs the UART fault dump.
+- Found & fixed on the way (all in the working tree, compiled, NOT flashed):
+  1. `client_register_spec_client_cb` was called without `client_init()` →
+     it failed silently (`_gattClientId` invalid). Now `EspHomeApi::initGatt()`
+     does `client_init` + general cb + spec cb from `setup()`; boot log says `gatt=1`.
+  2. `onDisconnect` (BLE-stack ctx) sent on the socket and called `startScan()`
+     — violating our own rule. Now it only sets `_discMask`; the API task sends
+     (`serviceDisconnects`) and `loop()` resumes scanning (`_resumeScan`).
+  3. Hardware watchdog (8 s, `WDT` lib) added; kicked in `loop()` and inside the
+     connect wait. A crash now reboots in ~25 s total. **It must be stopped
+     around `http_update_ota`** (the pull blocks loop() ~15 s) — fixed in the
+     working tree, but the image currently ON the device (build 12:01:45) has
+     the watchdog without that fix → **it cannot be OTA'd; next flash is UART.**
+- New tooling in `flashtool/`: `esp32_reset.py` (reset peripheral),
+  `ota_trigger.py` (MQTT ota cmd), `mqtt_log.py [secs] --cmd "..."` (tails
+  `wbrg1/<id>/log|status|telemetry`, optional command). Firmware publishes a
+  boot marker (`boot: build <date> gatt=N heap=N`) and honours diag commands on
+  the cmd topic, all executed in `loop()`: `scan off`, `scan on`,
+  `conn <12hex> [type]`, `disc`.
+- Next: wire the Pico (FLASHING.md), flash `km0_km4_image2.bin` with
+  `tools/uart_flash.py`, keep the UART attached, reproduce the connect with
+  `mqtt_log.py 20 --cmd "conn 582abd7d3152 0"` (no API involved) and read the
+  fault dump; map the PC with `arm-elf-addr2line -e <cache>/application.axf`.
+  If the diag connect works but the API path crashes, the bug is in
+  `handleDeviceRequest`/the blocked API task, not BLE.
+
 Read this first, then `CONNECTABLE_DESIGN.md` (§Concurrency has the crash rule).
 This is a live-hardware task: build → OTA → power-cycle-to-recover → test, in a loop.
 
