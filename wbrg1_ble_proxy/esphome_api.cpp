@@ -47,6 +47,28 @@ static bool getVarint(const uint8_t *buf, size_t *idx, size_t end, uint64_t *out
     return false;
 }
 
+// Read a varint field by number from a protobuf message payload.
+static bool pbField(const uint8_t *buf, size_t len, uint32_t field, uint64_t *out) {
+    size_t i = 0;
+    while (i < len) {
+        uint64_t tag;
+        if (!getVarint(buf, &i, len, &tag)) break;
+        uint32_t f = (uint32_t)(tag >> 3), wt = (uint32_t)(tag & 7);
+        if (wt == 0) {
+            uint64_t v;
+            if (!getVarint(buf, &i, len, &v)) break;
+            if (f == field) { *out = v; return true; }
+        } else if (wt == 2) {
+            uint64_t l;
+            if (!getVarint(buf, &i, len, &l)) break;
+            i += (size_t)l;
+        } else if (wt == 5) i += 4;
+        else if (wt == 1) i += 8;
+        else break;
+    }
+    return false;
+}
+
 static size_t pbString(uint8_t *buf, size_t pos, uint32_t field, const char *s) {
     size_t n = strlen(s);
     buf[pos++] = (uint8_t)((field << 3) | 2);
@@ -90,7 +112,6 @@ void EspHomeApi::taskRun() {
             vTaskDelay(100);
             continue;
         }
-        cAcc++;
         _rxLen = 0;
         serveClient();
         closeClient();
@@ -113,7 +134,6 @@ void EspHomeApi::serveClient() {
         if (_rxLen >= RXCAP) _rxLen = 0;  // wedged; drop
         int n = recv_data(_cliFd, _rx + _rxLen, (uint16_t)(RXCAP - _rxLen), 0);
         if (n > 0) {
-            cRecv++;
             _rxLen += (size_t)n;
             // parse complete frames
             size_t consumed = 0;
@@ -201,7 +221,6 @@ void EspHomeApi::sendMessage(uint32_t msgType, const uint8_t *payload,
     p = putVarint(hdr, p, msgType);
     send_data(_cliFd, hdr, (uint16_t)p, 0);
     if (len) send_data(_cliFd, payload, (uint16_t)len, 0);
-    cSent++;
 }
 
 void EspHomeApi::sendEmpty(uint32_t msgType) {
@@ -215,7 +234,6 @@ void EspHomeApi::handleFrame(uint32_t msgType, const uint8_t *payload,
     uint8_t buf[256];
     size_t p = 0;
 
-    if (msgType == 1) cHello++;
     switch (msgType) {
         case 1:  // HelloRequest -> HelloResponse(2)
             p = pbUint(buf, p, 1, 1);
@@ -242,8 +260,8 @@ void EspHomeApi::handleFrame(uint32_t msgType, const uint8_t *payload,
             p = pbString(buf, p, 6, _model);
             p = pbString(buf, p, 12, "Tuya/Realtek");
             p = pbString(buf, p, 13, _name);
-            // bluetooth_proxy_feature_flags: PASSIVE_SCAN(1) | RAW_ADVERTISEMENTS(32)
-            p = pbUint(buf, p, 15, 33);
+            // flags: PASSIVE_SCAN(1) | ACTIVE_CONNECTIONS(2) | RAW_ADVERTISEMENTS(32)
+            p = pbUint(buf, p, 15, 35);
             sendMessage(10, buf, p);
             break;
         case 11:  // ListEntitiesRequest -> ListEntitiesDoneResponse(19)
@@ -257,7 +275,102 @@ void EspHomeApi::handleFrame(uint32_t msgType, const uint8_t *payload,
         case 87:  // UnsubscribeBluetoothLEAdvertisementsRequest
             _btSub = false;
             break;
+        case 80:  // SubscribeBluetoothConnectionsFreeRequest
+            sendConnectionsFree();
+            break;
+        case 68:  // BluetoothDeviceRequest (connect/disconnect)
+            handleDeviceRequest(payload, len);
+            break;
         default:  // ignore
             break;
     }
+}
+
+
+// ---- BLE connections (proxy) -------------------------------------------
+
+int EspHomeApi::findConn(uint64_t address) {
+    for (int i = 0; i < MAX_CONN; i++)
+        if (_conns[i].used && _conns[i].address == address) return i;
+    return -1;
+}
+
+int EspHomeApi::freeConnSlot() {
+    for (int i = 0; i < MAX_CONN; i++)
+        if (!_conns[i].used) return i;
+    return -1;
+}
+
+void EspHomeApi::sendConnectionsFree() {
+    int freeN = 0;
+    for (int i = 0; i < MAX_CONN; i++) if (!_conns[i].used) freeN++;
+    uint8_t buf[64];
+    size_t p = 0;
+    p = pbUint(buf, p, 1, (uint32_t)freeN);      // free
+    p = pbUint(buf, p, 2, (uint32_t)MAX_CONN);   // limit
+    for (int i = 0; i < MAX_CONN; i++)           // allocated addresses
+        if (_conns[i].used) p = pbUint(buf, p, 3, _conns[i].address);
+    sendMessage(81, buf, p);
+}
+
+void EspHomeApi::sendConnResponse(uint64_t address, bool connected, uint32_t mtu,
+                                  int32_t err) {
+    uint8_t buf[32];
+    size_t p = 0;
+    p = pbUint(buf, p, 1, address);
+    p = pbUint(buf, p, 2, connected ? 1 : 0);
+    p = pbUint(buf, p, 3, mtu);
+    // error is int32 (field 4); non-negative here so plain varint is fine
+    p = pbUint(buf, p, 4, (uint32_t)err);
+    sendMessage(69, buf, p);
+}
+
+void EspHomeApi::handleDeviceRequest(const uint8_t *payload, size_t len) {
+    uint64_t address = 0, reqType = 0, addrType = 0;
+    pbField(payload, len, 1, &address);
+    pbField(payload, len, 2, &reqType);
+    pbField(payload, len, 4, &addrType);
+
+    // request_type: 1 = DISCONNECT; 0/4/5 = CONNECT variants
+    if (reqType == 1) {
+        int idx = findConn(address);
+        if (idx >= 0) {
+            BLE.configConnection()->disconnect(_conns[idx].connId);
+            _conns[idx] = Conn();
+        }
+        sendConnResponse(address, false, 0, 0);
+        sendConnectionsFree();
+        return;
+    }
+
+    // CONNECT
+    int idx = findConn(address);
+    if (idx < 0) idx = freeConnSlot();
+    if (idx < 0) {  // no slots
+        sendConnResponse(address, false, 0, -1);
+        return;
+    }
+    uint8_t bd[6];
+    for (int i = 0; i < 6; i++) bd[i] = (uint8_t)((address >> (8 * i)) & 0xFF);
+    BLEAddr addr(bd);
+    BLE.configConnection()->connect(addr, (T_GAP_REMOTE_ADDR_TYPE)addrType, 4000);
+
+    int8_t connId = -1;
+    for (int t = 0; t < 40; t++) {
+        connId = BLE.configConnection()->getConnId(bd, (uint8_t)addrType);
+        if (connId >= 0 && BLE.connected((uint8_t)connId)) break;
+        vTaskDelay(100);
+    }
+    if (connId >= 0 && BLE.connected((uint8_t)connId)) {
+        BLE.configClient();
+        BLEClient *c = BLE.addClient((uint8_t)connId);
+        _conns[idx].used = true;
+        _conns[idx].address = address;
+        _conns[idx].connId = connId;
+        _conns[idx].client = c;
+        sendConnResponse(address, true, 247, 0);  // MTU refined later
+    } else {
+        sendConnResponse(address, false, 0, -1);
+    }
+    sendConnectionsFree();
 }

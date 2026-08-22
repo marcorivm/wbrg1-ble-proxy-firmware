@@ -141,7 +141,7 @@ void setup() {
     BLE.configScan()->updateScanParams();
     BLE.setScanCallback(scanCallback);
 
-    BLE.beginCentral(0);
+    BLE.beginCentral(3);   // allow up to 3 GATT connections (proxy) + scan
     BLE.configScan()->startScan();    // continuous
 
     Serial.println("[wbrg1] scanning");

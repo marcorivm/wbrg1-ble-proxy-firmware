@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 #include "advert.h"
+#include "BLEDevice.h"
 
 // Minimal ESPHome native-API server (plaintext framing) so Home Assistant's
 // ESPHome integration adopts this device. Phase 1: handshake + device info +
@@ -29,6 +30,12 @@ private:
     void serveClient();
     void flushAdverts();
     void closeClient();
+    // BLE connections (proxy)
+    void handleDeviceRequest(const uint8_t *payload, size_t len);
+    void sendConnResponse(uint64_t address, bool connected, uint32_t mtu, int32_t err);
+    void sendConnectionsFree();
+    int findConn(uint64_t address);
+    int freeConnSlot();
     void handleFrame(uint32_t msgType, const uint8_t *payload, size_t len);
     void sendMessage(uint32_t msgType, const uint8_t *payload, size_t len);
     void sendEmpty(uint32_t msgType);
@@ -46,8 +53,13 @@ private:
     const char *_model = "";
 
     volatile bool _btSub = false;   // HA subscribed to BLE advertisements
-public:
-    volatile uint16_t cAcc = 0, cRecv = 0, cHello = 0, cSent = 0;  // debug counters
-private:
     AdvertQueue _adv;               // main loop -> API task
+
+    static const int MAX_CONN = 3;
+    struct Conn {
+        bool used = false;
+        uint64_t address = 0;
+        int8_t connId = -1;
+        BLEClient *client = nullptr;
+    } _conns[MAX_CONN];
 };
