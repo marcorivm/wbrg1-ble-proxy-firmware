@@ -1,5 +1,58 @@
 # Handoff — connectable BLE proxy (Phase 3), 2026-08-22
 
+## STATUS 2026-08-22 evening — connect freezes the chip below the HCI layer; Phase 3 parked
+**Symptom (deterministic, reproduced ~15×):** any `le_connect()` to any peer
+(ESP32 test peripheral, a random nearby 18:de:50:… device) establishes the link
+(peer sees it) and within ~1 s the **KM4 CPU stops dead**: polling printf cuts
+mid-line, WiFi/ping die, no fault dump, the 8 s hardware watchdog reboots it.
+Scanning (continuous, active, duplicates on) is rock solid.
+
+**Ruled out on hardware (each one an OTA cycle with UART + ping + peer logs):**
+- calling task (marshalled to `loop()`), scan running vs stopped, peer identity
+- `client_init()`/GATT registration (was broken: fixed), disconnect-path sends
+- WiFi power-save off, WiFi disconnected, WiFi-side coex (`wifi_btcoex_set_bt_off`)
+- BT-side coex hooks (rtk_coex.o replaced by no-ops via link override)
+- BT controller patch: the core's (chip3, ver E8B87C92) AND Tuya's stock patch
+  (entry 2, ver 4298EE6D, re-keyed to chip 3 — accepted by the controller once
+  the FLATK write (0xFD91, rejected by the old patch) is tolerated by NOP'ing the
+  status check at `hci_tp_config+0x30` in `lib_arduino.a(hci_adapter.o)`)
+- BT config blob: byte-identical between Tuya's firmware and the core (both the
+  11-byte `rtlbt_config` and the 25-byte fix-efuse config)
+- flash/boot images (read back and verified), OTA slots
+
+**Conclusion:** the stall is under the host stack — most likely the BT block's
+low-power/clock handshake with the KM0 power core, i.e. the RTL8722 core's KM0
+image/PMC running on an RTL8721CSM. Tuya's firmware (own KM0 image) connects fine.
+
+**Options if resuming:**
+1. SWD: the Pico debugprobe is a CMSIS-DAP; pyocd 0.45 is installed. Wire
+   SWD_DATA/SWD_CLK (AmebaD: PA27/PB3 — confirm on the module), halt at the
+   freeze, read PC/registers. Decisive, needs wiring.
+2. KM0 transplant: build image2 with Tuya's KM0 part (dump @0x6000, 90656 B)
+   + our KM4 part. IPC ABI mismatch risk → boot hang → UART recovery.
+3. Park Phase 3 (current state). Scanner + Bermuda unaffected; ESP32 proxies
+   do the GATT work.
+
+**Recovery lessons (paid for today):**
+- The watchdog must be stopped around `http_update_ota` (blocks loop ~15 s) and
+  must start BEFORE `BLE.init()` (a hung BT init otherwise sticks forever).
+- Boot safety net: `BKUP_REG5` counter; 2 consecutive BT-init failures → boot
+  WiFi/MQTT-only (SAFE-MODE in boot marker) so OTA stays possible.
+- With the Pico debugprobe wired, its UART side holds PA7 low at reset → every
+  reset lands in ROM download mode. To boot: unplug LOG_TX, tap CHIP_EN, replug.
+- The smart-plug `pcycle.sh` only works if the gateway is actually on that plug.
+- Bootloader can prefer the OTA2 slot; a bad image there is wiped with
+  `tools/uart_erase.py <port> 0x106000 0x1000` from ROM download mode.
+- `uart_flash.py` must run from `flashtool/` with `PYTHONPATH=$PWD` (needs
+  `rtltool.py` + `imgtool_flashloader_amebad.bin` in cwd).
+
+**Tools added:** `tools/uart_erase.py`, `mqtt_log.py` (tail log/status/telemetry,
+`--cmd`), `ota_trigger.py`, `esp32_reset.py`. Experiment artifacts (patch/coex
+overrides, tolerant-init lib, disassembly) live in the non-git working tree
+`~/Projects/personal/wbrg1-ble/experiments/` (Tuya blobs stay out of git).
+Diag MQTT cmds: `scan on|off`, `conn <12hex> [type]`, `connw …` (WiFi off first),
+`disc`, `ps off`, `coex off`, `reboot`.
+
 ## UPDATE 2026-08-22 afternoon — task-context was NOT the root cause
 Validated on hardware with the marshalled build (connect runs in `loop()`):
 - From `loop()`: `stopScan()` OK, `connect()` to a non-existent address OK
