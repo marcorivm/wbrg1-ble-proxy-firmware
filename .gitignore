@@ -1,0 +1,10 @@
+# secrets & local config
+wbrg1_ble_proxy/config.h
+# vendor tools fetched locally
+tools/rtltool.py
+tools/imgtool_flashloader_amebad.bin
+# build artifacts / dumps
+*.bin
+!*/*.bin.example
+__pycache__/
+*.pyc

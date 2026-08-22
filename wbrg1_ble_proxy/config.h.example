@@ -1,0 +1,32 @@
+#pragma once
+
+// ---- Fill these in before flashing --------------------------------------
+#define WIFI_SSID       "YOUR_WIFI_SSID"
+#define WIFI_PASS       "YOUR_WIFI_PASSWORD"
+
+#define MQTT_HOST       "192.168.1.10"   // your broker (e.g. the HA Mosquitto add-on)
+#define MQTT_PORT       1883
+#define MQTT_USER       "YOUR_MQTT_USER"              // "" for anonymous
+#define MQTT_PASS       "YOUR_MQTT_PASSWORD"
+
+// Identifies this scanner to the Home Assistant side. Must be unique per
+// module if more than one ever runs.
+#define SCANNER_ID      "wbrg1-gw1"      // board 1, the JZZWG-TY2.0
+
+#define MQTT_TOPIC      "wbrg1/" SCANNER_ID "/adv"
+#define MQTT_STATUS     "wbrg1/" SCANNER_ID "/status"
+#define MQTT_CMD        "wbrg1/" SCANNER_ID "/cmd"
+// -------------------------------------------------------------------------
+
+// Passive scanning by default: it never transmits. Active scanning would
+// request scan responses (more data per device) at the cost of putting the
+// radio on air right next to the Zigbee router sharing this enclosure.
+#define SCAN_ACTIVE     0
+
+#define SCAN_INTERVAL_MS 200
+#define SCAN_WINDOW_MS   180
+
+// How often the queue is drained and pushed out. Adverts arrive far faster
+// than they need to be reported; batching keeps MQTT traffic sane while
+// still giving Bermuda a steady RSSI stream.
+#define FLUSH_INTERVAL_MS 1000
