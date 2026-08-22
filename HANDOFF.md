@@ -25,9 +25,9 @@ low-power/clock handshake with the KM0 power core, i.e. the RTL8722 core's KM0
 image/PMC running on an RTL8721CSM. Tuya's firmware (own KM0 image) connects fine.
 
 **Options if resuming:**
-1. SWD: the Pico debugprobe is a CMSIS-DAP; pyocd 0.45 is installed. Wire
-   SWD_DATA/SWD_CLK (AmebaD: PA27/PB3 — confirm on the module), halt at the
-   freeze, read PC/registers. Decisive, needs wiring.
+1. ~~SWD~~ — **impossible on the WBRG1.** AmebaD SWD is fixed at SWDIO=PA27
+   (module pin 33 `GNT`) / SWCLK=PB3, and PB3 is NOT bonded out of the module
+   (checked against the datasheet pad diagram, 2026-08-22). Don't retry.
 2. KM0 transplant: build image2 with Tuya's KM0 part (dump @0x6000, 90656 B)
    + our KM4 part. IPC ABI mismatch risk → boot hang → UART recovery.
 3. Park Phase 3 (current state). Scanner + Bermuda unaffected; ESP32 proxies
