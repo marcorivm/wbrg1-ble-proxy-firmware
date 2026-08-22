@@ -216,6 +216,35 @@ and the module appears under *Settings → Devices & services → Bluetooth* and
 Bermuda's scanner list. It's advertisement-only (`connectable=False`), which is all
 Bermuda needs.
 
+## ESPHome native API (Bluetooth proxy)
+
+Besides the MQTT path, the firmware runs a minimal **ESPHome native-API** server
+(plaintext, port 6053) in its own task, so Home Assistant's **ESPHome integration**
+adopts the module directly and uses it as a native **Bluetooth proxy** — no custom
+integration needed. Add it in HA via *Settings → Devices → Add integration →
+ESPHome*, host = the module IP, port 6053, no encryption key.
+
+It advertises `bluetooth_proxy_feature_flags = PASSIVE_SCAN | RAW_ADVERTISEMENTS`
+and streams `BluetoothLERawAdvertisementsResponse` frames, which Bermuda consumes
+like any ESP32 proxy. Implemented from ESPHome's `api.proto` by hand-rolling just
+the protobuf framing and the handful of messages needed (Hello/Connect/DeviceInfo/
+Ping/ListEntities + the BLE advert messages) — see `wbrg1_ble_proxy/esphome_api.*`.
+
+Notes from building it:
+- Plaintext framing is `0x00, varint(len), varint(type), payload`. HA still works
+  without encryption when the device offers plaintext.
+- Realtek's `bd_addr` is **LSB-first**; ESPHome's advert `address` is a big-endian
+  uint64, so reconstruct it from `bd_addr[5..0]` or every device shows up
+  byte-reversed and won't correlate with your other scanners.
+- Don't hold the core's `WiFiClient` across loop iterations — its destructor
+  closes the socket and it has no refcounting. Use raw sockets (`ard_socket.h`)
+  in a dedicated task instead.
+- The server is single-client (HA). Add an idle timeout so a dead client is
+  dropped and HA can reconnect.
+
+Both transports (MQTT scanner + ESPHome proxy) can run at once; the ESPHome path
+is the recommended one and can replace the MQTT scanner + companion integration.
+
 ## Diagnostics
 
 The firmware publishes a telemetry line on `wbrg1/<id>/telemetry` every 30 s and

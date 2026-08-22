@@ -22,6 +22,7 @@ public:
 
     // Register a command topic + handler; (re)subscribed on every connect.
     void onCommand(const char *topic, void (*cb)(char *, uint8_t *, unsigned int));
+    void publishRaw(const char *topic, const char *payload) { if (ready()) _mqtt.publish(topic, payload); }
 
     // Publish a JSON telemetry line for the diagnostic sensors (HA discovery
     // config is auto-published on connect).

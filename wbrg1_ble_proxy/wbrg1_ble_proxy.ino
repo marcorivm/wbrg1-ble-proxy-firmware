@@ -23,9 +23,15 @@
 #include "advert.h"
 #include "config.h"
 #include "sink_mqtt.h"
+#include "esphome_api.h"
 
 static AdvertQueue queue;
 static MqttSink sink;
+
+// ESPHome native API server (Phase 1: adoption). Runs alongside MQTT.
+static EspHomeApi espApi;
+static bool espApiStarted = false;
+static char espMac[18] = {0};
 
 // Coalesced view of one flush window.
 static const size_t BATCH_MAX = 48;
@@ -94,6 +100,7 @@ static void drainQueue() {
     Advert a;
     while (queue.pop(a)) {
         seenTotal++;
+        espApi.pushAdvert(a);   // ESPHome native BLE proxy (no-op unless HA subscribed)
         bool merged = false;
         for (size_t i = 0; i < batchCount; i++) {
             if (batch[i].advType == a.advType && memcmp(batch[i].addr, a.addr, 6) == 0) {
@@ -146,6 +153,17 @@ void loop() {
     // Every pass: keep the BLE ring empty. This must not be gated behind the
     // MQTT servicing below, which blocks ~500 ms per call in this core.
     drainQueue();
+
+    // ESPHome native API: start once WiFi is up, then service every pass.
+    if (!espApiStarted && WiFi.status() == WL_CONNECTED) {
+        espApiStarted = true;
+        uint8_t m[6] = {0};
+        WiFi.macAddress(m);
+        snprintf(espMac, sizeof(espMac), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 m[0], m[1], m[2], m[3], m[4], m[5]);
+        espApi.begin(6053, SCANNER_ID, espMac, "WBRG1 (RTL8721CSM)");
+        Serial.println("[esp-api] server started on :6053");
+    }
 
     unsigned long now = millis();
 
