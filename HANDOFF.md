@@ -1,6 +1,22 @@
 # Handoff — connectable BLE proxy (Phase 3), 2026-08-22
 
-## RESOLVED 2026-08-24 — connections WORK; root cause narrowed; ship build archived
+## PHASE 3 COMPLETE 2026-08-24 — connect + GATT read/write/notify all work
+3c is implemented and verified twice end-to-end via the ESPHome API
+(`tools/esphome_gatt_rw_test.py`): read (returns the char value), write with
+response (acked), notify subscribe (CCCD write; notifications stream as msg 79
+via an SPSC ring drained by the API task), unsubscribe, disconnect. Messages:
+73/76→74, 75/77→83, 78→84, data→79, errors→82. Kickoffs run from the API task
+blocking on `_rwSem` (same proven pattern as discovery); indications get
+`client_attr_ind_confirm` in the callback. Ship build 2026-08-24 12:47:34,
+archived in `experiments/known-good-20260824b/` (the earlier connect-only build
+remains in `known-good-20260824/`). Advert queue capacity is 64 now (SRAM).
+
+**Next:** re-enable the HA ESPHome integration for the device and validate a
+real HA BLE device through the proxy (remember: single API client — close test
+scripts first). Then optionally strip the diag/spy instrumentation — but ONLY
+with the layout-sensitivity verify ritual below.
+
+## Previous milestone (2026-08-24 morning) — connections work; root cause narrowed
 **State: BLE connect + MTU 247 + full GATT discovery work end-to-end through the
 ESPHome API** (esphome_gatt_test.py passes; 4× connect/disconnect cycles, 60 s
 held link, scanner pauses during a connection and resumes after — all verified).
