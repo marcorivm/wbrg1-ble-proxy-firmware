@@ -11,10 +11,13 @@ blocking on `_rwSem` (same proven pattern as discovery); indications get
 archived in `experiments/known-good-20260824b/` (the earlier connect-only build
 remains in `known-good-20260824/`). Advert queue capacity is 64 now (SRAM).
 
-**Next:** re-enable the HA ESPHome integration for the device and validate a
-real HA BLE device through the proxy (remember: single API client — close test
-scripts first). Then optionally strip the diag/spy instrumentation — but ONLY
-with the layout-sensitivity verify ritual below.
+**HA integration re-enabled 2026-08-24 and validated:** ESPHome connected
+(update entity live), and Bermuda's active proxy count went 3 -> 4 with the
+WBRG1 streaming adverts into HA's Bluetooth stack. GATT connections will be
+exercised organically when an HA integration needs one (the proxy advertises
+active-connections + raw-advertisements, flags=35). Optional future cleanup:
+strip the diag/spy instrumentation — but ONLY with the layout-sensitivity
+verify ritual below, and there is no strong reason to.
 
 ## Previous milestone (2026-08-24 morning) — connections work; root cause narrowed
 **State: BLE connect + MTU 247 + full GATT discovery work end-to-end through the
