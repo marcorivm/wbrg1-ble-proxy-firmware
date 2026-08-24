@@ -17,7 +17,7 @@ Start as a plain Thread *router* to densify a mesh seeded by an existing Apple/N
 
 ## The honest caveats
 
-- **You must choose Zigbee or Thread.** One 802.15.4 radio can't run both stacks simultaneously; flashing Thread ends this chip's Zigbee-router duty. Your mesh loses a router — and this is the router you're about to move to the Kitchen, so it's not free.
+- **You must choose Zigbee or Thread.** One 802.15.4 radio can't run both stacks simultaneously; flashing Thread ends this chip's Zigbee-router duty. Your mesh loses a router while it runs Thread — reversible (reflash back to Zigbee), but plan the coverage gap.
 - **A real border router is a big build.** OTBR isn't just Thread firmware — it needs an IP interface bridging Thread↔WiFi, with the RCP (radio) on the ZS3L and the host stack somewhere with real networking. The RTL8721CSM has WiFi but isn't a Linux host running `otbr-agent`; standing up a genuine OTBR across these two constrained chips (RCP over the same unproven inter-chip link, host duties on a microcontroller) is a major, possibly impractical, project. A plain router node is far more attainable than a border router.
 - **Matter adds certification and complexity.** Commissioning, the Matter data model, and interop testing are heavy; certification only matters if you distribute, but the protocol surface is large either way.
 

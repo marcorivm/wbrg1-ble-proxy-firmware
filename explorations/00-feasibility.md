@@ -18,7 +18,7 @@ The ZS3L runs **router** firmware. A router **relays/routes** frames and hosts i
 
 So any "**the box commands Zigbee devices locally**" idea is **not possible with current firmware.** It needs either (a) reflashing the ZS3L to a **secondary-coordinator / custom-endpoint / NCP** image, or (b) merely *routing* a command the real coordinator issued (no local intelligence).
 
-**Reflashing risk is real.** The ZS3L is a **working router in the live mesh**, and it's slated to **move to the Kitchen for fridge temp sensors** — it is *in use*, not spare. Reflashing means losing router service during the flash, NVM3 mesh-state churn, SWD access (Pico/CMSIS-DAP, per the efr32 handoff), and a restore path that leans on the out-of-repo Tuya backup. Treat the ZS3L as **frozen** unless a feature is worth taking it off the mesh — and prototype on a *spare* EFR32 first (you already converted a second board).
+**Reflashing is reversible, not scary — this is a homelab.** The owner is comfortable reflashing the ZS3L, especially the device actively being worked on; "it's deployed" is *not* a blocker here. What reflashing actually costs is concrete and bounded: brief loss of router service during the flash, NVM3 mesh-state churn (the device re-joins / may need re-pairing), SWD access (Pico/CMSIS-DAP, per the efr32 handoff), and a restore path via the out-of-repo Tuya backup. So the honest framing is **"a re-pair and a restore step away," not "high risk / avoid."** Sensible hygiene still applies: keep the Tuya backup handy, and prototype disruptive experiments on a *spare* EFR32 (a second board is already converted) so the in-enclosure one only gets the firmware you've already proven.
 
 ## 3. 2.4 GHz coexistence
 
@@ -45,6 +45,6 @@ Per HANDOFF.md, the WBRG1 firmware is **verified-fragile**:
 | **Local presence→action via BLE actuators** | Nothing — WBRG1 GATT client works today | Low–Med | Low |
 | **Local presence→action via Zigbee actuators** | ZS3L router→coordinator reflash **+** confirmed UART (§1) | High | **High** — in-use mesh router |
 | **BLE ↔ Zigbee bridge** | Confirm §1 UART + custom firmware on both + coexistence (§3) | Very High | **High** — touches both chips |
-| **Thread / Matter** on the ZS3L | New 802.15.4 stack, full reflash, no border-router story here | Very High (research) | **High** — loses Zigbee router |
+| **Thread / Matter** on the ZS3L | New 802.15.4 stack, full reflash, no border-router story here | Very High (research) | Med — reversible; loses Zigbee router while flashed |
 
-**Bottom line:** the near-term resilience layer and BLE-actuator local control are a weekend away. Everything genuinely cross-radio hinges first on **confirming the §1 UART** — which is likely wired and cheap to check — and every ZS3L reflash trades away a working, soon-to-be-relocated mesh router, so prototype on a spare EFR32.
+**Bottom line:** the near-term resilience layer and BLE-actuator local control are a weekend away. Everything genuinely cross-radio hinges first on **confirming the §1 UART** — which is likely wired and cheap to check — and a ZS3L reflash is reversible (re-pair + restore from the Tuya backup) — do disruptive experiments on a spare EFR32 first, then flash the in-box one once proven.
