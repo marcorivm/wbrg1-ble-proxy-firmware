@@ -4,7 +4,7 @@
 Both front LEDs are single active-high GPIOs on the WBRG1 (Tuya's old state/net
 LEDs); our firmware never drove them, so they sat dark. Identified by an on-device
 pad sweep: **red = PA25 (0x19), blue = PB22 (0x36)**. Now driven by ledInit()/
-ledService() in the sketch: blue = link health (solid = WiFi+MQTT up, blink =
+ledService() in the sketch: 
 connecting, off = no WiFi), red = attention (off healthy, blink = WiFi down, solid
 = safe-mode). Build 2026-08-24 13:51:58 passed the verify ritual (3x conn/disc, no
 freeze); archived in experiments/known-good-20260824c-leds/. The scan/diag LED
