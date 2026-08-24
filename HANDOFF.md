@@ -1,5 +1,57 @@
 # Handoff — connectable BLE proxy (Phase 3), 2026-08-22
 
+## RESOLVED 2026-08-24 — connections WORK; root cause narrowed; ship build archived
+**State: BLE connect + MTU 247 + full GATT discovery work end-to-end through the
+ESPHome API** (esphome_gatt_test.py passes; 4× connect/disconnect cycles, 60 s
+held link, scanner pauses during a connection and resumes after — all verified).
+Build 2026-08-24 12:30:03, archived with its exact toolchain artifacts in
+`~/Projects/personal/wbrg1-ble/experiments/known-good-20260824/`
+(ota bin, image2, axf, map, patched lib_arduino.a, sketch snapshot).
+
+**What the bug was (as far as instrumentable):** on the first ACL send after a
+connection (`att_send_mtu_req` → `l2cu_send_data` → `hci_send_pkt`, and
+`btif_gatt_server_store_ind` persisting GATT state), the KM4 ends up stuck in a
+context that even a priority-0 WDG IRQ cannot preempt — no fault, printf cut
+mid-line, WiFi dead, only the hardware watchdog recovers. Systematically ruled
+out with retained-SRAM spies across ~10 freeze cycles: osif_lock (depth 0),
+kernel vPortEnterCritical (nest 0), FLASH_Write_Lock (state 0 — though its
+`cpsid i` + IPC-to-KM0 + masked ACK spin at 0x48000204 remains the most
+suspicious code in the image), the HCI UART ISR (inflag 0), and every hooked
+NVIC vector. **The trigger is XIP code layout**: byte-identical configurations
+freeze or work depending on where the flash-cached hot paths land; adding or
+removing ~100 B of code flips it deterministically. The ship build works and
+keeps ALL spies armed — if it ever freezes again, the next boot's MQTT log
+prints girq/crt/flk/lck lines naming the context.
+
+**Rules for future rebuilds (IMPORTANT):**
+- Any source or library change can reshuffle XIP layout and re-trigger the
+  freeze. After EVERY rebuild: OTA, then run at least 3× `conn`/`disc` diag
+  cycles + `esphome_gatt_test.py` before trusting it. The safe-mode boot
+  counter and watchdog make a bad build recoverable over OTA (2 failed BT
+  inits → WiFi-only boot); a connect-freeze build just WDT-reboots.
+- The known-good image can always be restored: OTA
+  `experiments/known-good-20260824/wbrg1_ota.bin`, or UART-flash the archived
+  `km0_km4_image2.bin`.
+- lib_arduino.a is MODIFIED in the working tree (osif_lock/unlock and
+  ftl_flash_write/erase weakened; vPortEnter/ExitCritical and
+  FLASH_Write_Lock/Unlock renamed to real_*). Pristine copy: lib_arduino.a.orig.
+  The sketch defines the strong replacements (spies + FTL flash no-op — the
+  proxy keeps no persistent bonds by design).
+- Recovery model for this board (learned the hard way): any CHIP_EN reset
+  lands in ROM download mode (external flash stays in XIP mode; only power-on
+  resets it). `pcycle.sh` (Plug R1) = boot; MQTT `uartburn` cmd = enter
+  download mode; UART flashing via the Pico debugprobe on GP4/GP5
+  (`tools/uart_flash.py` from flashtool/ with PYTHONPATH=$PWD;
+  `tools/uart_bkup.py` reads/clears BKUP_REG0 at 0x480003C0;
+  `tools/uart_erase.py` wipes an OTA slot signature).
+
+**Remaining Phase 3 work (3b/3c):** GATT read/write/notify handlers — the
+kickoffs must run in loop() via the existing `_pendOp` marshalling
+(CONNECTABLE_DESIGN.md §§3b/3c). Discovery already works. After implementing,
+re-verify per the rebuild rules above, then re-enable the HA ESPHome
+integration for the device (it was left disabled so tools can hold the single
+API slot).
+
 ## STATUS 2026-08-22 evening — connect freezes the chip below the HCI layer; Phase 3 parked
 **Symptom (deterministic, reproduced ~15×):** any `le_connect()` to any peer
 (ESP32 test peripheral, a random nearby 18:de:50:… device) establishes the link
