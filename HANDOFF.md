@@ -19,6 +19,11 @@ The resident firmware is now **MQTT-free** and is the daily-driver proxy:
   adverts stream (msg 93), and Bermuda counts it as an active proxy. The proxy does
   NOT implement scan-mode management, so HA never labels it "auto" like full
   ESPHome proxies — cosmetic only; raw advertisements (what presence needs) work.
+- **Scanner state/mode implemented 2026-08-24:** DeviceInfo flags now 99 (adds
+  STATE_AND_MODE=64); on advert-subscribe (msg 66) and on SetMode (msg 127) we send
+  BluetoothScannerStateResponse(126) = RUNNING + ACTIVE, so HA's adapter page shows
+  the proxy as actively scanning instead of "No scanning". We always active-scan,
+  so mode is fixed. (Was flags 35 before; the "No scanning" label was this gap.)
 - Scanner + proxy + presence + LEDs (blue = 1/min heartbeat, red = warnings): solid.
   Verified stable (uptime climbs, adverts stream to HA, Bermuda proxy).
 - Resident image archived: `experiments/resident-20260824-mqtt-free/`.
