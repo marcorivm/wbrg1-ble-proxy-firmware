@@ -11,6 +11,14 @@ The resident firmware is now **MQTT-free** and is the daily-driver proxy:
   as the API — not PubSubClient). Tool: `tools/ctrl.py "<cmd>"` (e.g. `ctrl.py "ota
   <host> <port> <res>"`, `ctrl.py "reboot"`, `ctrl.py "conn <mac>"`). One command
   per connection. Replaces the old MQTT `ota_trigger.py` / command topic.
+  Query `ctrl.py "stat"` -> `api_client=.. bt_sub=.. adv_sent=.. seen=.. wifi=..`
+  to confirm HA is connected and advert streaming is live.
+- **Advert path verified working:** after a reboot HA takes ~60 s to reconnect to
+  :6053 and re-subscribe; during that window HA's adapter page shows the proxy as
+  "No scanning / 0 connections" (transient, not a fault). Once settled, bt_sub=1,
+  adverts stream (msg 93), and Bermuda counts it as an active proxy. The proxy does
+  NOT implement scan-mode management, so HA never labels it "auto" like full
+  ESPHome proxies — cosmetic only; raw advertisements (what presence needs) work.
 - Scanner + proxy + presence + LEDs (blue = 1/min heartbeat, red = warnings): solid.
   Verified stable (uptime climbs, adverts stream to HA, Bermuda proxy).
 - Resident image archived: `experiments/resident-20260824-mqtt-free/`.
