@@ -24,6 +24,12 @@ The resident firmware is now **MQTT-free** and is the daily-driver proxy:
   BluetoothScannerStateResponse(126) = RUNNING + ACTIVE, so HA's adapter page shows
   the proxy as actively scanning instead of "No scanning". We always active-scan,
   so mode is fixed. (Was flags 35 before; the "No scanning" label was this gap.)
+  Confirmed on hardware: HA's adapter card now shows it actively scanning.
+- **OTA gotcha (paid for):** a `ctrl.py "ota …"` can download the full image yet NOT
+  reboot into it (silent verify/apply failure) — the device keeps running the old
+  build. Always confirm the reboot took: `ctrl.py "stat"` after (or the HA uptime
+  sensor) — if uptime did NOT reset to ~0, the OTA didn't apply; just re-trigger it.
+  A build whose behavior "didn't change" after OTA is almost always this.
 - Scanner + proxy + presence + LEDs (blue = 1/min heartbeat, red = warnings): solid.
   Verified stable (uptime climbs, adverts stream to HA, Bermuda proxy).
 - Resident image archived: `experiments/resident-20260824-mqtt-free/`.
