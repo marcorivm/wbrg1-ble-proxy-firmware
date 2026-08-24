@@ -333,13 +333,41 @@ wbrg1_ble_proxy/            # the Arduino sketch
   advert.h                  #   Advert record, AdvertSink interface, SPSC ring
   sink_mqtt.{h,cpp}         #   MQTT transport (swappable behind AdvertSink)
   config.h.example          #   copy to config.h and fill in
+docs/
+  FLASHING.md               # the ROM protocol, wiring, the PA7 trap, per-board notes
 tools/
+  requirements.txt          # pyserial + paho-mqtt (install before wiring anything up)
   make_ota.py               # wrap km0_km4_image2.bin -> OTA_All container  (the key tool)
   ota_httpd.py              # tiny HTTP server that logs bytes served (for OTA)
   uart_flash.py             # first-time bootstrap flash over UART
   uart_dump.py              # back up the stock 8 MB flash over UART
   fetch_vendor_tools.sh     # fetch rtltool.py + flashloader (OpenBeken FlashTools, GPL)
+
+  # bootstrap / recovery path -- what you need to convert a NEW module or
+  # rescue one that will not boot. All of these talk to the ROM bootloader.
+  xsend_rtk.py              # enter download mode, upload the SRAM flashloader
+  dump.py                   # read flash through the resident loader (backup)
+  verify_dump.py            # sanity-check an 8 MB backup before writing anything
+  flash.py                  # erase + write the three images, then verify by read-back
+  restore.py                # put the stock Tuya firmware back
+  listen.py                 # watch LOG_TX (boot log, or ROM NAK polling)
+  esphome_gatt_test.py      # exercise connect + GATT discovery over the API
+  pcycle.sh                 # power-cycle the gateway via an HA smart plug
+  ota_push.sh               # legacy DownloadServer push (superseded by make_ota.py)
+  grab.py xsend.py xsend1k.py try-rom.sh jig.py    # earlier attempts, kept for the record
 ```
+
+Host tooling needs `pyserial` and `paho-mqtt`; without them the UART tools fail
+at import, which is easy to misread as a hardware fault mid-flash:
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
+```
+
+Most tools honour `WBRG1_UART` (serial port) and `WBRG1_BACKUP` (which board's
+stock dump to check). Set `WBRG1_BACKUP` explicitly when more than one module
+exists — each backup is that unit's only way back to Tuya, and they are not
+interchangeable.
 
 ## Credits
 

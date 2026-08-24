@@ -11,7 +11,19 @@
 
 // Identifies this scanner to the Home Assistant side. Must be unique per
 // module if more than one ever runs.
+// Select the board at build time (an integer, so nothing depends on shell or
+// build-property quoting surviving):
+//   arduino-cli compile --build-property compiler.c.extra_flags=-DWBRG1_BOARD=2 ...
+// Keep every ID the SAME LENGTH: it is a string constant in the image, and this
+// core's BLE stack is XIP-layout sensitive (see docs/FLASHING.md).
+#ifndef WBRG1_BOARD
+#define WBRG1_BOARD 1
+#endif
+#if WBRG1_BOARD == 2
+#define SCANNER_ID      "wbrg1-gw2"      // board 2, the RSH-GW018-DM
+#else
 #define SCANNER_ID      "wbrg1-gw1"      // board 1, the JZZWG-TY2.0
+#endif
 
 #define MQTT_TOPIC      "wbrg1/" SCANNER_ID "/adv"
 #define MQTT_STATUS     "wbrg1/" SCANNER_ID "/status"

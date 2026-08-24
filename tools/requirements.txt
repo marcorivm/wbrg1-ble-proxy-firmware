@@ -1,0 +1,6 @@
+# Host-side deps for the flashing / diagnostic tools.
+#   python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
+# Without these the UART tools fail at import, which looks like a hardware
+# fault if you are mid-flash -- install them before wiring anything up.
+pyserial>=3.5
+paho-mqtt>=2.0
