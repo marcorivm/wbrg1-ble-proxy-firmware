@@ -1,5 +1,39 @@
 # Handoff — connectable BLE proxy (Phase 3), 2026-08-22
 
+## RESIDENT STATE 2026-08-24 (evening) — MQTT retired; GATT-connect parked again
+The resident firmware is now **MQTT-free** and is the daily-driver proxy:
+- **No MQTT / PubSubClient.** The flapping (rc=-4 CONNACK-timeout retry storms on
+  this core's PubSubClient) is gone. HA gets everything over the ESPHome API.
+- **Telemetry = native ESPHome API sensors** (`sensor.office_wbrg1_gw1_*`:
+  wifi_rssi, free_heap, uptime, adverts_seen, queue_drops). See
+  esphome_api.cpp: setTelemetry / sendListEntities / sendSensorStates (msgs 16/25).
+- **Control/OTA over a reliable socket on :6054** (`ard_socket.h`, same proven layer
+  as the API — not PubSubClient). Tool: `tools/ctrl.py "<cmd>"` (e.g. `ctrl.py "ota
+  <host> <port> <res>"`, `ctrl.py "reboot"`, `ctrl.py "conn <mac>"`). One command
+  per connection. Replaces the old MQTT `ota_trigger.py` / command topic.
+- Scanner + proxy + presence + LEDs (blue = 1/min heartbeat, red = warnings): solid.
+  Verified stable (uptime climbs, adverts stream to HA, Bermuda proxy).
+- Resident image archived: `experiments/resident-20260824-mqtt-free/`.
+
+**GATT-connect is PARKED AGAIN (regressed by the MQTT removal).** The big code
+change reshuffled the whole-image layout and re-triggered the XIP-layout stall.
+Key finding this session: it is **NOT** just BT-library alignment — padding the app
+so that ALL seven BT hot functions (hci_send_pkt, hci_adjust_link_quota,
+l2c_send_pdu_msg, hci_if_task, gatt_handle_le_conn_cmpl_evt, hci_handle_le_evt,
+bte_sched_handler) land at the EXACT known-good addresses did **not** fix it. So
+the stall depends on the *whole* image (KM0 WiFi/PMC firmware, data/heap, other
+libs, app), which a fundamentally different app (no PubSubClient, +ctrl/sensors)
+cannot reproduce. A robust fix needs root-causing the silicon XIP stall — a real
+research project. **Nothing in normal presence operation triggers a connect**
+(Bermuda is passive), so the freeze never fires in daily use.
+
+**To use GATT connect today:** flash the archived GATT-working build
+`experiments/known-good-20260824c-leds/` (it has GATT + LEDs, but MQTT flapping).
+The freeze-debug spies (girq/crt/flk/lck/rec, printed on the UART at each boot
+after a freeze) and the weakened lib symbols remain in the resident build, dormant
+— ready for a future GATT re-stabilization attempt.
+
+
 ## STATUS LEDs restored 2026-08-24 — pins identified, wired to link health
 Both front LEDs are single active-high GPIOs on the WBRG1 (Tuya's old state/net
 LEDs); our firmware never drove them, so they sat dark. Identified by an on-device
