@@ -1,5 +1,15 @@
 # Handoff — connectable BLE proxy (Phase 3), 2026-08-22
 
+## STATUS LEDs restored 2026-08-24 — pins identified, wired to link health
+Both front LEDs are single active-high GPIOs on the WBRG1 (Tuya's old state/net
+LEDs); our firmware never drove them, so they sat dark. Identified by an on-device
+pad sweep: **red = PA25 (0x19), blue = PB22 (0x36)**. Now driven by ledInit()/
+ledService() in the sketch: blue = link health (solid = WiFi+MQTT up, blink =
+connecting, off = no WiFi), red = attention (off healthy, blink = WiFi down, solid
+= safe-mode). Build 2026-08-24 13:51:58 passed the verify ritual (3x conn/disc, no
+freeze); archived in experiments/known-good-20260824c-leds/. The scan/diag LED
+commands were removed once the pins were known.
+
 ## PHASE 3 COMPLETE 2026-08-24 — connect + GATT read/write/notify all work
 3c is implemented and verified twice end-to-end via the ESPHome API
 (`tools/esphome_gatt_rw_test.py`): read (returns the char value), write with
