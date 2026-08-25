@@ -1,31 +1,38 @@
 #pragma once
 
 // ---- Fill these in before flashing --------------------------------------
-#define WIFI_SSID       "YOUR_WIFI_SSID"
-#define WIFI_PASS       "YOUR_WIFI_PASSWORD"
+#define WIFI_SSID       "your-iot-ssid"
+#define WIFI_PASS       "your-wifi-password"
 
-#define MQTT_HOST       "192.168.1.10"   // your broker (e.g. the HA Mosquitto add-on)
+#define MQTT_HOST       "192.168.0.44"   // HA (ha.7259044.xyz), Mosquitto add-on
 #define MQTT_PORT       1883
-#define MQTT_USER       "YOUR_MQTT_USER"              // "" for anonymous
-#define MQTT_PASS       "YOUR_MQTT_PASSWORD"
+#define MQTT_USER       "mqtt-wbrg1"              // "" for anonymous
+#define MQTT_PASS       "your-mqtt-password"
 
 // Identifies this scanner to the Home Assistant side. Must be unique per
-// module if more than one ever runs.
-// Select the board at build time (an integer, so nothing depends on shell or
-// build-property quoting surviving):
+// module. Select the board at build time (integer, so nothing depends on
+// shell/build-property quoting surviving):
 //   arduino-cli compile --build-property compiler.c.extra_flags=-DWBRG1_BOARD=2 ...
-// Keep every ID the SAME LENGTH: it is a string constant in the image, and this
-// core's BLE stack is XIP-layout sensitive (see docs/FLASHING.md).
+// (compiler.c.extra_flags, NOT compiler.cpp.extra_flags — the cpp recipe ignores it)
+// Keep every ID the SAME LENGTH: it is a string constant in the image, and
+// this core's BLE stack is XIP-layout sensitive (see HANDOFF.md).
 #ifndef WBRG1_BOARD
 #define WBRG1_BOARD 1
 #endif
 #if WBRG1_BOARD == 2
-#define SCANNER_ID      "wbrg1-gw2"      // board 2, the RSH-GW018-DM
+#define SCANNER_ID      "wbrg1-gw018"    // board 2, the RSH-GW018-DM
 #else
-#define SCANNER_ID      "wbrg1-gw1"      // board 1, the JZZWG-TY2.0
+#define SCANNER_ID      "wbrg1-jzzwg"    // board 1, the JZZWG-TY2.0
 #endif
 
 #define MQTT_TOPIC      "wbrg1/" SCANNER_ID "/adv"
+// Home Assistant consumes BLE adverts over the ESPHome native API (:6053), so
+// streaming the same firehose over MQTT is redundant (nothing subscribes) and
+// was stressing the broker link. Off by default; set 1 only if a non-ESPHome
+// consumer (Node-RED, a custom logger) needs the MQTT scanner topic.
+// Telemetry, status/LWT, the log topic and the command topic stay on MQTT
+// regardless of this flag.
+#define MQTT_PUBLISH_ADVERTS 0
 #define MQTT_STATUS     "wbrg1/" SCANNER_ID "/status"
 #define MQTT_CMD        "wbrg1/" SCANNER_ID "/cmd"
 #define MQTT_TELEM      "wbrg1/" SCANNER_ID "/telemetry"
@@ -34,7 +41,7 @@
 // Passive scanning by default: it never transmits. Active scanning would
 // request scan responses (more data per device) at the cost of putting the
 // radio on air right next to the Zigbee router sharing this enclosure.
-#define SCAN_ACTIVE     0
+#define SCAN_ACTIVE     1
 
 #define SCAN_INTERVAL_MS 200
 #define SCAN_WINDOW_MS   180

@@ -30,7 +30,7 @@ public:
 // allocation and no network from inside that context.
 class AdvertQueue {
 public:
-    static const size_t CAPACITY = 96;
+    static const size_t CAPACITY = 64;
 
     void push(const Advert &a) {
         size_t next = (_head + 1) % CAPACITY;
