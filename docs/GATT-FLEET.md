@@ -9,9 +9,10 @@ control/OTA socket on :6054. No MQTT.
 | JZZWG-TY2.0 | `wbrg1-jzzwg` | 192.168.0.175 |
 | RSH-GW018-DM | `wbrg1-gw018` | 192.168.0.130 |
 
-Build source of truth: `wbrg1-ble/experiments/gw2-gatt-SOLVED-20260824/`
-(local, non-git: sketch snapshots per version, OTA images, full evidence
-chain). This doc is the condensed engineering record.
+Fleet firmware: **v7.1** — this repo's `wbrg1_ble_proxy/` sketch matches the
+deployed build (synced 2026-08-25). Evidence archive with per-version
+snapshots, OTA images and rollbacks:
+`wbrg1-ble/experiments/gw2-gatt-SOLVED-20260824/` (local, non-git).
 
 ## The connect-freeze root cause (ends the "XIP layout lottery")
 Both boards use a Boya BY25Q64 flash (JEDEC 68 40 17) whose read margin at
@@ -41,11 +42,16 @@ boards, plus full GATT r/w/notify through HA.
    controller forever and blocks all scanning; startScan cannot revive it.
    Guard: `cancelPendingConnects()` (le_disconnect on CONNECTING links) +
    startScan in every connect-failure path.
-2. **Scan-engine hard wedge**: after many connect/pause/resume cycles the
-   scan engine dies (startScan accepted, zero adverts; only reboot revives;
-   connects still work, so it hides). Guard: scan-starvation watchdog —
-   no adverts for 120 s with no active connection → logged self-reboot.
-   Root cause open.
+2. **BT-host-task stall** (formerly "scan-engine hard wedge"): under connect
+   churn the BT host task stops draining its queue — adverts die, soft fixes
+   post to a dead queue, and synchronous GAP calls from other tasks hang the
+   caller (proven via v7.1's retained-SRAM ladder verdict: it died in its
+   first GAP call, reaped by the hardware WDT). **Reboot is the only
+   recovery**; the scan-starvation watchdog (no adverts 120 s + no active
+   connection → self-reboot) is the fence. v7.1 additionally records a
+   `scanfix-prev:` verdict across every reboot. ~1/hour on a board carrying
+   GATT traffic; zero on an idle one; ~40 s per event.
+   RULE: never call GAP synchronously while the advert counter is starved.
 
 **Health checks measure counter DELTAS** (adverts seen), never connection
 state: api=1/sub=1 while deaf was tonight's most deceptive state.

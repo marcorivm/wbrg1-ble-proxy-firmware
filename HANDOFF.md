@@ -1,5 +1,43 @@
 # Handoff — WBRG1 BLE proxy fleet
 
+## UPDATE 2026-08-25 (midday) — v7.1 fleet; scan-wedge VERDICT delivered
+Both boards now run **v7.1** (this repo's sketch matches it — the sync-from-
+archive requirement below is RESOLVED as of commits f0388ed/fc1cdbf).
+
+**Scan-wedge root cause is settled: the BT HOST TASK stalls** (stops draining
+its message queue) under sustained connect churn. Adverts die because that
+task processes them; every soft fix (scan on/off, param reset, conn/disc
+cycles) just posts to a queue nothing reads; and any SYNCHRONOUS GAP call
+from another task then blocks forever. Proof: v7.1's soft-recovery ladder
+persists its progress in retained SRAM (SFX_BASE 0x1007BFC0, printed as
+`scanfix-prev:` next boot) — the first natural wedge produced all-sentinel
+values: the ladder died inside its FIRST GAP call, reaped by the 8 s hardware
+WDT. **Watchdog reboot is the only recovery** — the v6 scan-starvation
+watchdog was already optimal; v7.1 keeps it and records a verdict at every
+occurrence (~8 s slower than a direct reboot, via WDT).
+
+Rates: ~1 wedge/hour on the board carrying GATT traffic (gw018, Airthings
+endurance rig), zero on the idle one. Cost per event: ~40 s advert gap,
+self-healed, HA rides through.
+
+**Rule for all future firmware work: never call the GAP API synchronously
+when the advert counter is starved — the caller hangs.**
+
+New in v7/v7.1 (in this repo's sketch): scanwd soft-recovery ladder +
+retained verdict; diags `scanstate` (GAP dev state) and `scanfix` (run ladder
+on demand). Deploy verification is now BOOT-MARKER based (`ctrl log` after
+OTA; a counter heuristic false-positived once).
+
+Open items (revised):
+1. (optional) v8: simplify scanwd back to direct reboot + retained wedge
+   counter once 2-3 more wedges confirm identical sentinels.
+2. OTA first-trigger-ignored quirk (unchanged, consistent).
+3. Why the BT host task stalls under churn — deep-research, closed-binary
+   stack; fenced by watchdogs, does not affect operation.
+4. Offsite copies of the four Tuya backups.
+5. Retire hass-wbrg1-ble-proxy (MQTT-era HACS integration, obsolete).
+
+
 ## FLEET STATE 2026-08-25 — GATT SOLVED AND DEPLOYED ON BOTH BOARDS (v6)
 
 **The XIP connect-freeze is root-caused and fixed. GATT connect + discovery +
