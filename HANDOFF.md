@@ -1,4 +1,109 @@
-# Handoff — connectable BLE proxy (Phase 3), 2026-08-22
+# Handoff — WBRG1 BLE proxy fleet
+
+## FLEET STATE 2026-08-25 — GATT SOLVED AND DEPLOYED ON BOTH BOARDS (v6)
+
+**The XIP connect-freeze is root-caused and fixed. GATT connect + discovery +
+read/write/notify work on BOTH boards, verified end-to-end through HA.** The
+"layout lottery" is closed; everything below the ruler line is history.
+
+| board | name (renamed) | IP | firmware |
+|---|---|---|---|
+| JZZWG-TY2.0 | `wbrg1-jzzwg` (was wbrg1-gw1) | 192.168.0.175 | v6 fleet build |
+| RSH-GW018-DM | `wbrg1-gw018` (was wbrg1-gw2) | 192.168.0.130 | v6 fleet build (+disc instrumentation) |
+
+Source of truth for the deployed build:
+`~/Projects/personal/wbrg1-ble/experiments/gw2-gatt-SOLVED-20260824/`
+(v2-fleet/sketch-v6 = sketch snapshot; v6_*_ota.bin = deployed images; README
+= full evidence chain, one section per iteration). Condensed engineering
+record in this repo: `docs/GATT-FLEET.md`.
+**The sketch in this repo (`wbrg1_ble_proxy/`) and the shared working tree
+(`wbrg1-ble/sketches/wbrg1_ble_proxy/`) are BEHIND the deployed v6 — sync
+from the archive snapshot before touching firmware.**
+
+### Root cause of the connect freeze (ends every layout theory below)
+Both modules carry a **Boya BY25Q64** flash (JEDEC 68 40 17). On marginal
+dies its read-timing eye at the SDK's default SPIC clock is ~zero; the bus
+load of a BLE connection pushes it over → garbage XIP fetch → unpreemptable
+KM4 stall. "Layout sensitivity" was cache-miss patterns moving across the
+marginal fetches; "unit sensitivity" was per-die flash grade. Proven by
+elimination on board 2 (deterministic 100% freezer): three board-1-verified
+layouts binary-patched with zero layout drift → froze; trace-UART stubbed →
+froze; **Tuya-KM0 transplant booted and froze** (KM0 exonerated, IPC ABI
+compatible); PSRAM empty, FTL writes already stubbed, wakelocks already held;
+runtime phase probe showed the read window is exactly {calibrated}; halving
+the SPIC clock → **first successful connects ever on that board**, then 6/6,
+4/4, 3/3, and 2/2 first-ever connects on board 1.
+
+**The fix: `flashClkSafe()`** (flash_diag.cpp) — FLASH_baud_rate/boot=2 +
+FLASH_SetSpiMode, re-asserted every 100 ms in loop() AND immediately before
+every connect kickoff (KM0-side clock management sporadically restores the
+fast divider; set-once is not enough). Diags: flashid / flashbench /
+flashphase / flashbaud over :6054.
+
+### What the fleet build (v2→v6) adds on top of the 2026-08-24 resident
+- v2: unified sketch, per-board identity via config.h `WBRG1_BOARD`
+  (build with `compiler.c.extra_flags=-DWBRG1_BOARD=N` — NOT
+  compiler.cpp.extra_flags, silently dropped; NOT build.extra_flags, which
+  wipes the board defines and links a broken image), renames to
+  wbrg1-jzzwg / wbrg1-gw018, flashClkSafe, trace_uart_* stubs (need
+  trace_uart_{init,deinit,tx} WEAKENED in lib_arduino.a via objcopy), ctrl
+  `log` command reading a 10-line in-RAM ring.
+- v3: **DeviceInfo feature flags 99 → 103.** aioesphomeapi HARD-REFUSES to
+  route ANY GATT connection through a proxy without REMOTE_CACHING(4)
+  ("does not support REMOTE_CACHING feature"); with it set HA sends the
+  CONNECT_V3 request types (handleDeviceRequest already accepted 0/4/5).
+- v4: **GATT services response (71) now serializes descriptors** (field 4;
+  short_uuid = field 3). Without the CCCD listed, HA's bleak client refuses
+  start_notify ("does not have a characteristic client config descriptor").
+- v5: **cancelPendingConnects()** — a timed-out le_connect stays PENDING in
+  the controller forever and silently blocks ALL scanning (startScan cannot
+  revive it). Both boards went advert-dark for Bermuda this way while
+  api=1/sub=1 looked healthy. Fix: le_disconnect() every link in
+  GAP_CONN_STATE_CONNECTING on any connect failure, then startScan. Deploy
+  drill: `conn 112233445566 0` must leave the scanner streaming.
+- v6: **scan-starvation watchdog** — a SECOND, deeper freeze: after many
+  connect/pause/resume cycles the scan engine hard-wedges (startScan
+  accepted, zero adverts; scan off/on and clean conn/disc do NOT revive it;
+  only reboot does; connects keep working so it hides). Guard: no adverts for
+  120 s with no active connection → "scanwd:" log + self-reboot (~30 s).
+  Root-causing the wedge (scan re-init without reboot?) is the top open item.
+
+**Health checks measure COUNTER DELTAS (stat `seen`), never connection
+state** — api=1/sub=1 while deaf was the night's most deceptive state.
+
+### HA side (done tonight)
+- Devices/entities/config entries renamed (`sensor.wbrg1_jzzwg_*`,
+  `sensor.wbrg1_gw018_*`; MAC-based unique_ids so history survived); ghost
+  MQTT-era device removed + 20 retained broker topics cleared; both
+  bluetooth-adapter entries retitled. HA shows both proxies Auto (active).
+- HA caches GATT tables per MAC: changing a peer's attribute table under a
+  known address breaks with-cache connects (stale handles → 2-4 s
+  connect/drop loops). Give test peripherals a FRESH MAC instead.
+
+### Endurance rig (running)
+ESP32 (`wbrg1-ble/sketches/airthings_emulator/`, MAC 58:2A:BD:7D:31:99)
+emulates an Airthings Wave Plus; HA's airthings_ble integration polls it via
+GATT through the proxies every 5 min ("Airthings Wave Plus (2930123456)", 11
+entities, battery 95%). This organic traffic found v3-v6's bugs in hours.
+The ESP32 goes back to test-peripheral/proxy duty by reflashing.
+
+### Open items
+1. Root-cause the scan-engine hard wedge (v6 reboots around it; boot logs'
+   `scanwd:` frequency = how often it bites).
+2. OTA quirk now CONSISTENT: the FIRST `ota` trigger after boot is ignored;
+   the second identical trigger applies. Verify via boot marker / uptime
+   reset, never the HTTP log.
+3. serveClient exit-path instrumentation (rare benign API session drops).
+4. Sync this repo's sketch + shared tree from the v6 archive snapshot
+   (includes the objcopy lib-weakening step for the trace stubs).
+5. Board-1-style LED wiring survives in the build; re-verify LEDs after any
+   sync (unchanged since c-leds).
+
+---
+# (Historical) Handoff — connectable BLE proxy (Phase 3), 2026-08-22
+**Everything below predates the 2026-08-25 root-cause fix. Layout-lottery
+theories, "GATT parked", and gw1/gw2 naming are SUPERSEDED by the section
+above; kept for the investigation record.**
 
 ## RESIDENT STATE 2026-08-24 (evening) — MQTT retired; GATT-connect parked again
 The resident firmware is now **MQTT-free** and is the daily-driver proxy:
