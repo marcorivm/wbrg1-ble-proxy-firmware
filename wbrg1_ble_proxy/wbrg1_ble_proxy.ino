@@ -142,6 +142,10 @@ extern "C" void FLASH_Write_Unlock(void) {
 // active vector number + an in-flag in retained SRAM. After a watchdog reset
 // the boot marker names the ISR the chip died in (or rules out ISR context).
 #define GIRQ_BASE ((volatile uint32_t *)0x1007BFB0)  // [magic, vec, inflag, entries]
+// scanfix ladder verdict, retained across the reboot the ladder may end in:
+// [magic, rung1: stop_rc<<8|start_rc, moved1<<16|rung2_start_rc<<8|moved2, final_rung]
+#define SFX_BASE ((volatile uint32_t *)0x1007BFC0)
+#define SFX_MAGIC 0x5CAFF1Du
 #define GIRQ_MAGIC 0xB7B7B7B7u
 typedef void (*isr_fn_t)(void);
 static isr_fn_t girqOrig[80];
@@ -217,6 +221,16 @@ static void recDump() {
     }
     logLine(m);
     r[0] = 0;
+    if (SFX_BASE[0] == SFX_MAGIC) {
+        char sm[110];
+        snprintf(sm, sizeof(sm),
+                 "scanfix-prev: rung1 stop=%d start=%d moved=%d | rung2 start=%d moved=%d | final=%d",
+                 (int)((SFX_BASE[1] >> 8) & 0xFF), (int)(SFX_BASE[1] & 0xFF),
+                 (int)((SFX_BASE[2] >> 16) & 0xFF), (int)((SFX_BASE[2] >> 8) & 0xFF),
+                 (int)(SFX_BASE[2] & 0xFF), (int)SFX_BASE[3]);
+        logLine(sm);
+        SFX_BASE[0] = 0;
+    }
 }
 
 // Hardware watchdog. Kicked every loop pass and inside the long BLE waits.
@@ -294,6 +308,8 @@ static void handleCommand(char *buf) {
     if (strncmp(buf, "uartburn", 8) == 0) { diagOp = 10; return; }  // reboot into ROM UART download mode
     if (strncmp(buf, "flashid", 7) == 0)  { diagOp = 11; return; }  // JEDEC id + SPIC params
     if (strncmp(buf, "flashbench", 10) == 0) { diagOp = 14; return; }  // time a 16KB user-mode read
+    if (strncmp(buf, "scanstate", 9) == 0) { diagOp = 15; return; }  // dump GAP dev state
+    if (strncmp(buf, "scanfix", 7) == 0)  { diagOp = 16; return; }  // run the scan recovery ladder
     if (strncmp(buf, "connw ", 6) == 0)   { diagWifiOff = true; memmove(buf + 4, buf + 5, strlen(buf + 5) + 1); }  // "connw x" -> "conn x"
     if (strncmp(buf, "conn ", 5) == 0) {
         // parse 12 hex digits by hand (newlib-nano sscanf has no %llx)
@@ -547,6 +563,71 @@ void cancelPendingConnects() {
     }
 }
 
+// ---- scan-wedge soft recovery (v7) --------------------------------------
+// The scan engine occasionally hard-wedges after connect churn (v6 rebooted
+// through it, ~1x/hour under GATT polling). This ladder tries soft recoveries
+// first and logs exactly which rung works — the root-cause probe AND the fix.
+#include "gap_scan.h"   // le_scan_start/stop/set_param, T_LE_SCAN_PARAM_TYPE
+#include "gap_msg.h"    // T_GAP_DEV_STATE
+
+static void logScanState(const char *tag) {
+    T_GAP_DEV_STATE ds;
+    memset(&ds, 0, sizeof(ds));
+    le_get_gap_param(GAP_PARAM_DEV_STATE, &ds);
+    char m2[96];
+    snprintf(m2, sizeof(m2), "%s: init=%u scan=%u conn=%u adv=%u seen=%lu",
+             tag, ds.gap_init_state, ds.gap_scan_state, ds.gap_conn_state,
+             ds.gap_adv_state, (unsigned long)seenTotal);
+    logLine(m2);
+}
+
+// waits ~4 s (kicking the wdt) and reports whether adverts moved
+static bool advertsMoving() {
+    uint32_t s0 = seenTotal;
+    for (int i = 0; i < 40; i++) { delay(100); wdtKick(); }
+    return seenTotal != s0;
+}
+
+// returns rung that revived scanning: 1=stop/start, 2=param reset, 0=failed
+static int scanRecoveryLadder() {
+    char m2[80];
+    logScanState("scanfix: pre");
+    SFX_BASE[0] = SFX_MAGIC; SFX_BASE[1] = 0xFFFF; SFX_BASE[2] = 0xFFFFFF; SFX_BASE[3] = 99;
+    cancelPendingConnects();
+    // rung 1: GAP-level stop/start with return codes
+    T_GAP_CAUSE r1 = le_scan_stop();
+    delay(400); wdtKick();
+    T_GAP_CAUSE r2 = le_scan_start();
+    snprintf(m2, sizeof(m2), "scanfix: rung1 stop=%d start=%d", (int)r1, (int)r2);
+    logLine(m2);
+    SFX_BASE[1] = ((uint32_t)((uint8_t)r1) << 8) | (uint8_t)r2;
+    bool mv1 = advertsMoving();
+    SFX_BASE[2] = ((uint32_t)(mv1 ? 1 : 0) << 16) | 0xFFFF;
+    if (mv1) { logLine("scanfix: rung1 REVIVED"); SFX_BASE[3] = 1; return 1; }
+    // rung 2: full param re-set + start
+    le_scan_stop(); delay(400); wdtKick();
+    uint8_t mode = SCAN_ACTIVE ? GAP_SCAN_MODE_ACTIVE : GAP_SCAN_MODE_PASSIVE;
+    uint16_t interval = (uint16_t)(SCAN_INTERVAL_MS * 1000 / 625);
+    uint16_t window   = (uint16_t)(SCAN_WINDOW_MS * 1000 / 625);
+    uint8_t filt_pol = GAP_SCAN_FILTER_ANY, filt_dup = 0;
+    le_scan_set_param(GAP_PARAM_SCAN_MODE, sizeof(mode), &mode);
+    le_scan_set_param(GAP_PARAM_SCAN_INTERVAL, sizeof(interval), &interval);
+    le_scan_set_param(GAP_PARAM_SCAN_WINDOW, sizeof(window), &window);
+    le_scan_set_param(GAP_PARAM_SCAN_FILTER_POLICY, sizeof(filt_pol), &filt_pol);
+    le_scan_set_param(GAP_PARAM_SCAN_FILTER_DUPLICATES, sizeof(filt_dup), &filt_dup);
+    T_GAP_CAUSE r3 = le_scan_start();
+    snprintf(m2, sizeof(m2), "scanfix: rung2 param-reset start=%d", (int)r3);
+    logLine(m2);
+    SFX_BASE[2] = (SFX_BASE[2] & 0xFF0000u) | ((uint32_t)((uint8_t)r3) << 8) | 0xFF;
+    logScanState("scanfix: post2");
+    bool mv2 = advertsMoving();
+    SFX_BASE[2] = (SFX_BASE[2] & 0xFFFF00u) | (mv2 ? 1 : 0);
+    if (mv2) { logLine("scanfix: rung2 REVIVED"); SFX_BASE[3] = 2; return 2; }
+    logLine("scanfix: ladder FAILED");
+    SFX_BASE[3] = 0;
+    return 0;
+}
+
 extern "C" void flashDiagInfo(char *out, unsigned n);
 extern "C" void flashDiagBench(char *out, unsigned n);
 extern "C" void flashClkSafe(void);
@@ -564,7 +645,7 @@ static void runDiag() {
     int op = diagOp;
     if (op == 0) return;
     diagOp = 0;
-    if (!bleUp && op != 7 && op != 6 && op != 11 && op != 14) { logLine("diag: ignored, BLE not up (safe mode)"); return; }
+    if (!bleUp && op != 7 && op != 6 && op != 11 && op != 14 && op != 15) { logLine("diag: ignored, BLE not up (safe mode)"); return; }
     char m[96];
     if (op == 1) {
         logLine("diag: stopScan...");
@@ -591,6 +672,12 @@ static void runDiag() {
         logLine(m);
     } else if (op == 14) {
         flashDiagBench(m, sizeof(m));
+        logLine(m);
+    } else if (op == 15) {
+        logScanState("scanstate");
+    } else if (op == 16) {
+        int r = scanRecoveryLadder();
+        snprintf(m, sizeof(m), "scanfix: result=%d", r);
         logLine(m);
     } else if (op == 8) {
         wifi_btcoex_set_bt_off();
@@ -667,9 +754,19 @@ void loop() {
             scanWdLastSeen = seenTotal;
             scanWdLastChange = millis();
         } else if (millis() - scanWdLastChange > 120000) {
-            logLine("scanwd: no adverts for 120s with no active conn -- rebooting to recover scanner");
-            delay(400);
-            ota_platform_reset();
+            logLine("scanwd: no adverts for 120s with no active conn -- trying soft recovery");
+            int rung = scanRecoveryLadder();
+            if (rung > 0) {
+                char wm[48];
+                snprintf(wm, sizeof(wm), "scanwd: soft recovery ok (rung %d)", rung);
+                logLine(wm);
+                scanWdLastSeen = seenTotal;
+                scanWdLastChange = millis();
+            } else {
+                logLine("scanwd: soft recovery failed -- rebooting");
+                delay(400);
+                ota_platform_reset();
+            }
         }
     }
 
